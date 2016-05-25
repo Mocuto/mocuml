@@ -1,0 +1,14 @@
+/RUNNING_PID
+/logs/
+/project/*-shim.sbt
+/project/project/
+/project/target/
+/target/
+lib_managed/
+src_managed/
+project/boot/
+.history
+.cache
+.ensime
+.ensime_cache
+/*.log
