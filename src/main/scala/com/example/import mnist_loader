@@ -1,7 +1,0 @@
-import mnist_loader
-import network2
-
-training_data, d2, d3 = mnist_loader.load_data_wrapper()
-net = network2.Network([784, 30, 10])
-#get start time
-net.SGD(training_data, 30, 10, 0.5, evaluation_data=d3)

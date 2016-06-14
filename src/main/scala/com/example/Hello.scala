@@ -47,11 +47,6 @@ object Hello {
 
   class Trainer[A <: CostFunc](val costFunc : A) {
   	self : Reporter with Assessor[A] =>
-		/*final def train(n : Network, trainingSet : List[TrainingExample], batchSize : Int, epochs : Int, learningRate : Double,
-				momentum : Double = 0.0,
-				lmbda : Double = 0.0,
-				earlyStopCount : Double = Double.PositiveInfinity,
-				validationData : Option[List[TrainingExample]] = None) : Future[Network] = {*/
 		final def train(n : Network, td : TrainingData, hp : TrainingParameters) : Future[TrainingResult] = {
 
 			val p = Promise[TrainingResult]
@@ -77,7 +72,7 @@ object Hello {
 						val batches = timeThis("Shuffle"){(Random.shuffle(td.exampleSet).toVector).grouped(hp.batchSize).toList}
 
 						val (newNet, newVel) = whenEpochStarts(network, td, hp, epochsInner) {
-							applyBatches(network, batches, hp.learningRate, hp.momentum, velocity)
+							applyBatches(network, batches, hp.learningRate, hp.momentum, hp.lmbda / td.exampleSet.size, velocity)
 						}
 
 						//val netCost = totalCost(newNet, td.validationSet)
@@ -103,51 +98,78 @@ object Hello {
 		}
 
 		@tailrec
-		final def applyBatches(n : Network, batches : List[TrainingBatch], learningRate : Double, momentum : Double, velocity : Network)
+		final def applyBatches(n : Network, batches : List[TrainingBatch], learningRate : Double, momentum : Double, lambdaPerSize : Double, velocity : Network)
 			 	: (Network, Network) = batches match {
 
 			case List() => return (n, velocity)
 			case batch :: rest => {
 
-				val grad = n.backprop(batch, costFunc)
+				val (gradWs, gradBs) = n.backprop(batch, costFunc)
 
-				val velW = grad.weights.zip(velocity.weights).map { case (gradW, vW) => (vW * momentum) - (gradW * (learningRate / batch.length)) }
-				val velB = grad.biases.zip(velocity.biases).map { case (gradB, vB) => (vB * momentum) - (gradB * (learningRate / batch.length)) }
+				//val velW = gradWs.zip(velocity.weights).map { case (gradW, vW) => (vW * momentum) - (gradW * (learningRate / batch.length)) }
+				//val velB = gradBs.zip(velocity.biases).map { case (gradB, vB) => (vB * momentum) - (gradB * (learningRate / batch.length)) }
 
-				val newVel = Network(velW, velB, n.f, n.fPrime);
-				return applyBatches(n + newVel, rest, learningRate, momentum, newVel)
+				val (newLayers, velLayers) = (for {
+				 	((l, vl), (gradW, gradB)) <- (n.layers.zip(velocity.layers)).zip(gradWs.zip(gradBs));
+				 	(w, b, _, _) = Layer.unapply(l).get;
+				 	(vW, vB, _, _) = Layer.unapply(vl).get
+				} yield {
+
+					val velLayer = vl.gen(
+						weights = (vW * momentum) - (gradW * (learningRate / batch.length)),
+						biases = (vB * momentum) - (gradB * (learningRate / batch.length))
+					)
+					val newL = l.gen(
+						weights = (w * (1.0 - lambdaPerSize)) + velLayer.weights,
+						biases = b + velLayer.biases
+					)
+
+					(newL, velLayer)
+				}).unzip
+
+				val newVel = Network(velLayers)//Network(velW, velB, n.f, n.fPrime)
+				val newN = Network(newLayers)
+				/*val newN = Network(
+					(n.weights.map(_ * (1.0 - lambdaPerSize)) ).zip(velW).map(w => w._1 + w._2),
+					(n.biases.zip(velB)).map(b => b._1 + b._2),
+					n.f,
+					n.fPrime)*/
+
+				return applyBatches(newN, rest, learningRate, momentum, lambdaPerSize, newVel)
 			}
-		}
-
-		final def totalCost(n : Network, validationData : List[TrainingExample]) : Double = {
-			val results = validationData map { e =>
-				val (activation, target) = (n.feedforward(e.input), e.output.asDenseMatrix)
-
-				(0.0 /: (0 until activation.rows)) { (accum : Double, i : Int) => accum + costFunc(activation(i,0), target(i, 0)) }
-			}
-
-			return (0.0 /: results) (_ + _)
 		}
   }
+
+
 
   object Network {
 
-    def empty(f : (Double => Double), fPrime : (Double => Double)) = Network(List(), List(), f, fPrime)
+    def empty = Network(List())
 
-    def withIdentityActivation(weights : List[DMD], biases : List[DVD]) : Network = Network(weights, biases, identity, identity)
+    def withIdentityActivation(layers : List[Layer]) : Network = Network(layers.map(_.gen(f = identity, fPrime = identity)))
 
     def withLayerSizes(sizes : List[Int], f : (Double => Double), fPrime : (Double => Double)) : Network =
-    	Network(
+    	Network((sizes.sliding(2) map { case List(a, b) => FullyConnectedLayer(
+    		weights = DenseMatrix.rand(b, a, Rand.gaussian),
+    		biases = DenseVector.rand(b, Rand.gaussian).map(_ - 0.5),
+				f = f,
+				fPrime = fPrime)
+    	}).toList)
+
+    	/*Network(
     		(sizes.sliding(2) map { case List(a, b) => DenseMatrix.rand(b, a, Rand.gaussian) } ).toList,
     		(sizes.tail map (size => DenseVector.rand(size, Rand.gaussian).map(_ - 0.5))).toList,
     		f,
-    		fPrime)
+    		fPrime)*/
   }
 
-  case class Network(weights : List[DMD], biases : List[DVD], f : (Double => Double), fPrime : (Double => Double)) {
-
+  //case class Network(weights : List[DMD], biases : List[DVD], f : (Double => Double), fPrime : (Double => Double)) {
+	case class Network(layers : List[Layer]) {
 		def add(that : Network) : Network = that match {
-			case Network(tWeights, tBiases, f, fPrime) if tWeights.length == weights.length && tBiases.length == biases.length => {
+			case Network(tLayers) if tLayers.lengthCompare(layers.length) == 0 =>  Network(layers.zip(tLayers).map(t => t._1 + t._2))
+			case _ if layers.length == 0 => that
+			case _ => throw new IllegalArgumentException(s"values must have same dimensions, this: ${this.layers.size}, that: ${that.layers.size}")
+			/*case Network(tWeights, tBiases, f, fPrime) if tWeights.length == weights.length && tBiases.length == biases.length => {
 				return Network(
 					(weights.zip(tWeights)) map { case (aW, bW) => aW + bW },
 					(biases.zip(tBiases)) map { case (aB, bB) => aB + bB },
@@ -155,13 +177,16 @@ object Hello {
 					fPrime)
 			}
 			case Network(tWeights, tBiases, f, fPrime) if weights.length == biases.length && biases.length == 0 => that
-			case _ => throw new IllegalArgumentException(s"values must have same dimensions,this: ${this.weights.length}, ${this.biases.length} that: ${that.weights.length}, ${that.biases.length} ")
+			case _ => throw new IllegalArgumentException(s"values must have same dimensions,this: ${this.weights.length}, ${this.biases.length} that: ${that.weights.length}, ${that.biases.length} ")*/
 		}
 
 		def +(that : Network) : Network = return add(that)
 
 		def minus(that : Network) : Network = that match {
-			case Network(tWeights, tBiases, f, fPrime) if tWeights.length == weights.length && tBiases.length == biases.length => {
+			case Network(tLayers) if tLayers.lengthCompare(layers.length) == 0 =>  Network(layers.zip(tLayers).map(t => t._1 - t._2))
+			case _ if layers.length == 0 => that ** -1.0
+			case _ => throw new IllegalArgumentException(s"values must have same dimensions, this: ${this.layers.size}, that: ${that.layers.size}")
+			/*case Network(tWeights, tBiases, f, fPrime) if tWeights.length == weights.length && tBiases.length == biases.length => {
 				return Network(
 					(weights.zip(tWeights)) map { case (aW, bW) => aW - bW },
 					(biases.zip(tBiases)) map { case (aB, bB) => aB - bB },
@@ -171,81 +196,84 @@ object Hello {
 			case Network(tWeights, tBiases, f, fPrime) if weights.length == biases.length && biases.length == 0 =>
 				return Network(tWeights map (_ * -1.0), tBiases map (_ * -1.0), f, fPrime)
 
-			case _ => throw new IllegalArgumentException(s"values must have same dimensions,this: ${this.weights.length}, ${this.biases.length} that: ${that.weights.length}, ${that.biases.length} ")
+			case _ => throw new IllegalArgumentException(s"values must have same dimensions,this: ${this.weights.length}, ${this.biases.length} that: ${that.weights.length}, ${that.biases.length} ")*/
 		}
 
 		def -(that : Network) : Network = return minus(that)
 
-		def mult(const : Double) : Network = return Network(weights map (_ * const), biases map (_ * const), f, fPrime)
+		def mult(const : Double) : Network = return Network(layers.map((l : Layer)  => l ** const))
 
 	  def feedforward(input : List[Double]) : DMD = return feedforward(listToDVD(input))
 
-	  def feedforward(input : DVD) : DMD = return (feedforwardAccum(weights, biases)(List((input.asDenseMatrix.t, input.asDenseMatrix.t)))).last._2
+	  def feedforward(input : DVD) : DMD = return (feedforwardAccum()(List((input.asDenseMatrix.t, input.asDenseMatrix.t)))).head._2
 
 	  def feedforwardBatch(batch : TrainingBatch) : DMD = {
 	  	val (inputMatrix, _) = batchToIOMatrices(batch)
-	  	return (feedforwardAccum(weights, biases)(List((inputMatrix, inputMatrix) ))).last._2
+	  	return (feedforwardAccum()(List((inputMatrix, inputMatrix) ))).last._2
 	  }
 
 	  //previous activations is a list of tuple, the tuple being (output, activation)
-		@tailrec
-		final def feedforwardAccum(weights : List[DMD], biases : List[DVD])(previousActivations : List[(DMD, DMD)]) : List[(DMD, DMD)] = {
-	    if(biases.isEmpty)
+
+		final def feedforwardAccum(fromLayerIndex : Int = 0)(previousActivations : List[(DMD, DMD)]) : List[(DMD, DMD)] = {
+	    if(layers.isEmpty)
 	    {
 		  	return previousActivations
 	    }
 	    else
 	    {
-	    	val wA = weights.head * previousActivations.last._2
-			  val outputs = wA(::, *) + biases.head;
-			  //println("weights.head(0, ::)")
-			  //println(mean(weights.head(0, ::)))
-			  //println("previousActivations.last._2(::, 0)")
-			  //println(previousActivations.last._2(::, 0))
-			  //println(max(previousActivations.last._2))
-			  //println("and wA(0,0)")
-			  //println(wA(0, 0))
-			  //println(s"activation is $activation")
-			  return feedforwardAccum(weights.tail, biases.tail)(previousActivations :+ ((outputs, outputs.map(x => f(x)))))
+	    	val accumulated = (previousActivations /: layers) ((accum, l) => {
+	    		//val wTimesA = (l.weights * accum.last._2)
+	    		//val z = wTimesA(::, *) + l.biases
+	    		l.feedforward(accum.head._2) :: accum
+	    	})
+
+	    	return accumulated
 	    }
+	    	//val wA = weights.head * previousActivations.last._2
+			  //val outputs = wA(::, *) + biases.head;
+			  //return feedforwardAccum(weights.tail, biases.tail)(previousActivations :+ ((outputs, outputs.map(x => f(x)))))
+	    //}
 	  }
 
-	  def backprop[A <: CostFunc](batch : TrainingBatch, costFunc : A) : Network = {
+	  //def backprop[A <: CostFunc](batch : TrainingBatch, costFunc : A) : Network = {
+	  def backprop[A <: CostFunc](batch : TrainingBatch, costFunc : A) : (List[DMD], List[DVD]) = {
 	  	//TODO: Throw exception on empty batch
+	  	//TODO: Rewrite to use prepend rather than append
 
 	    @tailrec
-	    def calcDeltas(weights : List[DMD], deltas : List[DMD], outputs : List[DMD]) : List[DMD] = (weights, deltas, outputs) match {
+	    def calcDeltas(layers : List[Layer], deltas : List[DMD], outputs : List[DMD]) : List[DMD] = (layers, deltas, outputs) match {
 
 			  case (_, _, _ :: List()) => return deltas
 
-			  case ((restWeights :+ weight, headDelta :: _, restZ :+ z)) => {
-			  	val nextDelta = (weight.t * headDelta) :*  (z map(x => fPrime(x)))
-			  	//println("z")
-			  	//println(z)
-			  	//println(max(z))
-
-			  	return calcDeltas(restWeights, nextDelta :: deltas, restZ)
+			  //case ((restWeights :+ weight, headDelta :: _, restZ :+ z)) => {
+			  case((restLayers :+ Layer(w, _, _, fPrime), headDelta :: _, z :: restZ)) => {
+			  	val nextDelta = (w.t * headDelta) :*  (z map(x => fPrime(x)))
+			  	return calcDeltas(restLayers, nextDelta :: deltas, restZ)
 				}
 		  }
 
 		  val (iMatrix, oMatrix) = batchToIOMatrices(batch)
-			val rest :+ last = feedforwardAccum(weights, biases)(List( (iMatrix, iMatrix)))
+			val last :: rest = feedforwardAccum(0)(List( (iMatrix, iMatrix)))
 			val (z, a) = last
-			val (restZ, restA) = ((List.empty[DMD], List.empty[DMD]) /: rest) { case ((zAccum, aAccum), (zR, aR)) => ((zAccum :+ zR), (aAccum :+ aR)) }
+			val (restZ, restA) = ((List.empty[DMD], List.empty[DMD]) /: rest) { case ((zAccum, aAccum), (zR, aR)) => ((zAccum :+ zR), aR :: aAccum/*(aAccum :+ aR)*/) }
 
-			val deltaForFinalLayer = costFunc.matrixDelta(a, oMatrix, z, fPrime)
+			val lastLayer = layers.last
 
-		  val deltas = calcDeltas(weights, List(deltaForFinalLayer), restZ)
+			val deltaForFinalLayer = costFunc.matrixDelta(a, oMatrix, z, lastLayer.fPrime)
+
+		  //val deltas = calcDeltas(weights, List(deltaForFinalLayer), restZ)
+		  val deltas = calcDeltas(layers, List(deltaForFinalLayer), restZ)
 
 		  val dAndA = deltas.zip(restA)
 
-		  //println("restA")
-		  //println(max(restZ(1)))
+		  val (gradWs, gradBs) = (((List.empty[DMD], List.empty[DVD]) /: dAndA) {
+		  	case ((ws, bs), (d, prevA)) => ((d * prevA.t) :: ws, sum(d(*, ::)) :: bs)
+		  })
 
-		  return dAndA.foldLeft(Network.empty(f, fPrime)) {
-		  	case (Network(ws, bs, f, fP), (d : DMD, prevA : DMD)) =>
-		  		Network(ws :+ (d * prevA.t), bs :+ sum(d(*, ::)), f, fP)
-		  }
+		  return (gradWs.reverse, gradBs.reverse)
+		  //return dAndA.foldLeft(Network.empty(f, fPrime)) {
+		  	//case (Network(ws, bs, f, fP), (d : DMD, prevA : DMD)) => //Network(ws :+ (d * prevA.t), bs :+ sum(d(*, ::)), f, fP)
+		  //}
 		}
 
 		def **(const : Double) : Network = return mult(const)
@@ -349,8 +377,8 @@ object Hello {
 		val td = getMNISTData
 		val n = Network.withLayerSizes(List(28 * 28, 30, 10), sigmoid, sigmoidPrime)
 		val t = new Trainer(crossEntropy) with DefaultReporter with DefaultAssessor[CostFuncs.CrossEntropyCostFunc]
-		val hp = TrainingParameters(10, 30, 0.5, 0, 0)
-		td.map (data => t.train(n, data, hp)).map(f => println(concurrent.Await.result(f, concurrent.duration.Duration.Inf)))
+		val hp = TrainingParameters(10, 30, 0.5, momentum = 0.0, lmbda = 0.0)
+		td.map (data => t.train(n, data, hp)).map(f => concurrent.Await.result(f, concurrent.duration.Duration.Inf))
 		Thread.sleep(2000)
 		/*val n = Network.withLayerSizes(List(2,1), sigmoid, sigmoidPrime)
 
