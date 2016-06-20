@@ -129,7 +129,7 @@ object ConvolutionalLayer {
 	type ConvolutionalWeightInit = (Seq[Int], Int) => DMD
 	type ConvolutionalBiasInit = Int => DVD
 
-	def defaultWeightInit(lrfDimensions : Seq[Int], numOfFeatureMaps : Int) : DMD = DenseMatrix.rand[Double](lrfDimensions.reduce(_ * _), numOfFeatureMaps)
+	def defaultWeightInit(lrfDimensions : Seq[Int], numOfFeatureMaps : Int) : DMD = DenseMatrix.rand[Double](numOfFeatureMaps, lrfDimensions.reduce(_ * _))
 	def defaultBiasInit(numberOfFeatureMaps : Int) : DVD = DenseVector.rand[Double](numberOfFeatureMaps)
 
 	def gen(
@@ -158,8 +158,6 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 	def copy(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : ConvolutionalLayer = this.copy(weights, biases, f, fPrime)
 
 	def feedforward(input : DMD) : (DMD, DMD) = {
-		//println("TODO: Implement feedforward in ConvolutionalLayer!!")
-		//(input, input)
 		val wA = weights * format(input)
 		val z = wA(::, *) + biases
 
