@@ -1,5 +1,6 @@
 import org.scalatest._
 import com.example._
+import com.example.Hello._
 import breeze.linalg._
 
 class HelloSpec extends FlatSpec with Matchers {
@@ -61,8 +62,38 @@ class HelloSpec extends FlatSpec with Matchers {
 
   	actualZ should equal (expected)
   }
+  "The new delta method in layer" should "return the same value as the original Network.backprop" in {
+  	val n = Network.withLayerSizes(List(2,2, 1), sigmoid, sigmoidPrime)
 
-  "A net with a FCL -> CVL" should "backpropogate correctly" in {
+ 		val examples = List(
+			TrainingExample(DenseVector(0.0, 0.0), DenseVector(0.0)),
+			TrainingExample(DenseVector(1.0, 0.0), DenseVector(0.0)),
+			TrainingExample(DenseVector(0.0, 1.0), DenseVector(0.0)),
+			TrainingExample(DenseVector(1.0, 1.0), DenseVector(1.0)))
+
+ 		for(e <- examples)
+ 		{
+ 			val (_, originalDeltas) = n.backprop(scala.collection.immutable.Vector(e), CostFuncs.meanSquareError)
+ 			val (outputs, activations) = n.feedforwardAccum(0)(List((e.input.asDenseMatrix.t, e.input.asDenseMatrix.t))).unzip
+
+ 			val deltaForFinalLayer = CostFuncs.meanSquareError.matrixDelta(activations.head, e.output.asDenseMatrix.t, outputs.head, n.layers.last.fPrime)
+ 			println(s"deltaForFinalLayer $deltaForFinalLayer activations.head ${activations.head} e.output ${e.output} outputs.ast ${outputs.head}")
+
+ 			val newDeltas = (List(deltaForFinalLayer) /: (n.layers.reverse.sliding(2).toList.zip(outputs.reverse.tail))) { case (deltas, (prevLayer :: (layer :: _), z)) =>
+ 				val (delta :: _) = deltas
+ 				val nextDelta = layer.delta(z, delta, prevLayer.weights)
+
+ 				nextDelta :: deltas
+ 			}
+
+ 			for((oD, nD) <- originalDeltas.zip(newDeltas))
+ 			{
+ 				nD.toDenseVector should equal (oD)
+ 			}
+ 		}
+  }
+
+  /*"A net with a FCL -> CVL" should "backpropogate correctly" in {
   	val fclWeightInit = (size : Int, numOfInputs : Int) => DenseMatrix.ones[Double](size, numOfInputs)
   	val fclBiasInit = (size : Int) => DenseVector.ones[Double](size)
   	val fcl = FullyConnectedLayer.gen(9, 9, identity, (d : Double) => 1.0, weightInit = fclWeightInit, biasInit = fclBiasInit)
@@ -87,5 +118,5 @@ class HelloSpec extends FlatSpec with Matchers {
     
 
     val (_, deltas) = n.backprop(List(TrainingExample(input, output)), CostFuncs.meanSquareError)
-  }
+  }*/
 }

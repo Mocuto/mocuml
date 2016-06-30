@@ -31,6 +31,14 @@ trait Layer { this: { def copy(weights : DMD, biases : DVD, f : (Double => Doubl
 
 	def feedforward(input : DMD) : (DMD, DMD) // First DMD is the output, Second DMD is the activation, a = sigmoid(z)
 
+	/**
+		Calculates the delta for this layer,
+
+		output - An assumed "z" that this layer produced
+		lastDelta - The delta for the layer after this one (which precedes this layer in the backprop algo) 
+	*/
+	def delta(output : DMD, lastDelta : DMD, lastWeights : DMD) : DMD
+
 	def add(that : Layer) = gen(weights + that.weights, biases + that.biases, f, fPrime)
 
 	def +(that : Layer) = add(that)
@@ -70,6 +78,11 @@ case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Doubl
 		val wA = weights * input
 	  val outputs = wA(::, *) + biases;
 	  return (outputs, outputs.map(x => f(x)))
+	}
+
+	def delta(output : DMD, lastDelta : DMD, lastWeights : DMD) : DMD = {
+		println(s"z is $output lastDelta is $lastDelta")
+		return (lastWeights.t * lastDelta) :* (output map (z => fPrime(z))) 
 	}
 }
 
@@ -162,6 +175,11 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 		val z = wA(::, *) + biases
 
 		return (z, z.map(f(_)))
+	}
+
+	def delta(output : DMD, lastDelta : DMD, lastWeights : DMD) : DMD = {
+		println("Implment delta in ConvolutionalLayer")
+		return output
 	}
 }
 
