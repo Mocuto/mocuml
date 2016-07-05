@@ -12,3 +12,4 @@ project/boot/
 .ensime
 .ensime_cache
 /*.log
+.vscode

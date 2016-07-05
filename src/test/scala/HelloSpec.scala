@@ -62,6 +62,23 @@ class HelloSpec extends FlatSpec with Matchers {
 
   	actualZ should equal (expected)
   }
+
+  it should "have the right hidden layer dimensions" in {
+  	val l = ConvolutionalLayer(
+  		weights = DenseVector(1.0, 2.0, 3.0, 4.0).asDenseMatrix,
+  		biases = DenseVector(1.0),
+  		f = identity,
+  		fPrime = identity,
+  		lrfDimensions = List(2,2),
+  		inputDimensions = List(3,3),
+  		featureMaps = 1
+  	)
+	val expected = List(2,2)
+	val actual = l.hiddenDimensions.toList
+
+	actual should equal (expected)
+  }
+
   "The new delta method in layer" should "return the same value as the original Network.backprop" in {
   	val n = Network.withLayerSizes(List(2,2, 1), sigmoid, sigmoidPrime)
 
@@ -115,7 +132,6 @@ class HelloSpec extends FlatSpec with Matchers {
     val expectedDelta1 - DenseVector(17.0, 34.0, 51.0, 17.0, 34.0, 51.0, 17.0, 34.0, 51.0)
 
     val n = Network(List(fcl, cvl))
-    
 
     val (_, deltas) = n.backprop(List(TrainingExample(input, output)), CostFuncs.meanSquareError)
   }*/

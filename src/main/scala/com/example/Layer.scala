@@ -29,13 +29,15 @@ trait Layer { this: { def copy(weights : DMD, biases : DVD, f : (Double => Doubl
 
 	val fPrime : (Double => Double)
 
+	def deltaByWeight(delta : DMD) : DMD
+
 	def feedforward(input : DMD) : (DMD, DMD) // First DMD is the output, Second DMD is the activation, a = sigmoid(z)
 
 	/**
 		Calculates the delta for this layer,
 
 		output - An assumed "z" that this layer produced
-		lastDelta - The delta for the layer after this one (which precedes this layer in the backprop algo) 
+		lastDelta - The delta for the layer after this one (which precedes this layer in the backprop algo)
 	*/
 	def delta(output : DMD, lastDelta : DMD, lastWeights : DMD) : DMD
 
@@ -74,6 +76,9 @@ object FullyConnectedLayer {
 }
 
 case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) extends Layer {
+
+	def deltaByWeight(delta : DMD) : DMD = return weights.t * delta
+
 	def feedforward(input : DMD) : (DMD, DMD) = {
 		val wA = weights * input
 	  val outputs = wA(::, *) + biases;
@@ -81,8 +86,7 @@ case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Doubl
 	}
 
 	def delta(output : DMD, lastDelta : DMD, lastWeights : DMD) : DMD = {
-		println(s"z is $output lastDelta is $lastDelta")
-		return (lastWeights.t * lastDelta) :* (output map (z => fPrime(z))) 
+		return (lastWeights.t * lastDelta) :* (output map (z => fPrime(z)))
 	}
 }
 
@@ -103,12 +107,58 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 	val inputDimensions : Seq[Int]
 	val slide = 1
 
-	lazy val inputShape = if(inputDimensions.length == 1) (inputDimensions(0), 1) else {
+	val hiddenDimensions : Seq[Int] = ((inputDimensions zip(lrfDimensions)) map { case (iD, lrfD) => 1 + (iD - lrfD) })
+
+	lazy val inputShape = if (inputDimensions.length == 1) (inputDimensions(0), 1) else {
 		(inputDimensions(1), inputDimensions(0) * ((1 /: inputDimensions.slice(2, inputDimensions.length))(_ * _)))
 	}
 
-	lazy val lrfShape = if(lrfDimensions.length == 1) (lrfDimensions(0), 1) else {
+	lazy val lrfShape = if (lrfDimensions.length == 1) (lrfDimensions(0), 1) else {
 		(lrfDimensions(1), lrfDimensions(0) * ((1 /: lrfDimensions.slice(2, lrfDimensions.length))(_ * _)))
+	}
+
+	lazy val hiddenShape = if (hiddenDimensions.length == 1) (hiddenDimensions(0), 1) else {
+		(hiddenDimensions(1), hiddenDimensions(0) * ((1 /: hiddenDimensions.slice(2, hiddenDimensions.length))(_ * _)))
+	}
+
+	def deltaFormat(delta : DMD) : DMD = {
+		val square  = delta.reshape(hiddenShape._1, hiddenShape._2)
+
+		def recurse(r : Int, c : Int, accum : Option[DMD]) : Option[DMD] = {
+			val (lastRow, nextRow) = (r >= hiddenShape._1 - 1, c > hiddenShape._2)
+			if (lastRow && nextRow)
+			{
+				return accum
+			}
+			else if (nextRow)
+			{
+				return recurse(r + slide, 0, accum)
+			}
+
+			val slice = {
+				val (overflowR, overflowC) = (r - lrfShape._1 + 1, c - lrfShape._2 + 1)
+
+				if(overflowR < 0 || overflowC < 0)
+				{
+					val zeros = DenseMatrix.zeros[Double](lrfShape._1, lrfShape._2)
+					
+					zeros((lrfShape._1 - (r + 1)) until lrfShape._1, (lrfShape._2 - (c + 1)) until lrfShape._2) := square(0 to r, 0 to c)
+				}
+				else
+				{
+					square((r - lrfShape._1) to r, (c - lrfShape._2) to c)
+				}
+			}
+
+			val next = accum match {
+				case None => Some(slice)
+				case Some(value : DMD) => Some(DenseMatrix.horzcat(value, slice))
+			}
+
+			return recurse(r, c + slide, next)
+		}
+		val numOfSlides = (hiddenShape._1 + lrfShape._1 - 1) * (hiddenShape._2 + lrfShape._2 - 1)
+		return (recurse(0, 0, None)).getOrElse(DenseMatrix.zeros[Double](lrfShape._1 * lrfShape._2, numOfSlides))
 	}
 
 	def format(i : DMD) : DMD = {
@@ -171,10 +221,20 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 	def copy(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : ConvolutionalLayer = this.copy(weights, biases, f, fPrime)
 
 	def feedforward(input : DMD) : (DMD, DMD) = {
-		val wA = weights * format(input)
+		val wA = timesWeight(input)
 		val z = wA(::, *) + biases
 
 		return (z, z.map(f(_)))
+	}
+
+	def deltaByWeight(delta : DMD) : DMD = {
+		val hu = hiddenDimensions._1 * hiddenDimensions._2 // Number of hidden units per feature map
+		(0 until featureMaps *  hu by hu).map { i => //This map will be performed for each feature map
+			val d = delta(i until i + hu) // Slice the hidden units from one feature map
+
+			val dbd = weights(i / hu, ::) * deltaFormat(d)
+			//TODO: Take the result of this map and concatonate into one long column
+		}
 	}
 
 	def delta(output : DMD, lastDelta : DMD, lastWeights : DMD) : DMD = {
