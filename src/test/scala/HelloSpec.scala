@@ -16,10 +16,10 @@ class HelloSpec extends FlatSpec with Matchers {
   		(7.0, 8.0, 9.0))
 
   	val expected = DenseVector(
-  		1.0, 2.0, 4.0, 5.0,
-  		4.0, 5.0, 7.0, 8.0,
-  		2.0, 3.0, 5.0, 6.0,
-  		5.0, 6.0, 8.0, 9.0).asDenseMatrix.t.reshape(4, 4)
+  		1.0, 4.0, 2.0, 5.0,
+  		4.0, 7.0, 5.0, 8.0,
+  		2.0, 5.0, 3.0, 6.0,
+  		5.0, 8.0, 6.0, 9.0).asDenseMatrix.t.reshape(4, 4, false)
 
   	val formmatted = l.format(i)
   	formmatted should equal (expected)
@@ -28,11 +28,11 @@ class HelloSpec extends FlatSpec with Matchers {
   it should "unformat data correctly" in {
   	val l = ConvolutionalLayer.gen(List(2,2), List(3, 3), identity, identity, 1)
 
-  	val formmatted = DenseVector(
-  		1.0, 2.0, 4.0, 5.0,
-  		4.0, 5.0, 7.0, 8.0,
-  		2.0, 3.0, 5.0, 6.0,
-  		5.0, 6.0, 8.0, 9.0).asDenseMatrix.t.reshape(4, 4)
+  	val formmatted = DenseMatrix(
+  		(1.0, 2.0, 4.0, 5.0),
+  		(4.0, 5.0, 7.0, 8.0),
+  		(2.0, 3.0, 5.0, 6.0),
+  		(5.0, 6.0, 8.0, 9.0))
 
   	val expected = DenseVector(
   		1.0, 2.0, 4.0, 5.0,
@@ -56,8 +56,11 @@ class HelloSpec extends FlatSpec with Matchers {
   		featureMaps = 1
   	)
 
-  	val expected = DenseVector(36.0, 46.0 , 66.0, 76.0).asDenseMatrix
-  	val input = DenseMatrix((1.0,2.0,3.0),(4.0,5.0,6.0),(7.0, 8.0, 9.0))
+  	val expected = DenseVector(36.0, 66.0 , 46.0, 76.0).asDenseMatrix.t
+  	val input = DenseMatrix(
+      (1.0,2.0,3.0),
+      (4.0,5.0,6.0),
+      (7.0, 8.0, 9.0))
   	val (actualZ, actualA) = l.feedforward(input)
 
   	actualZ should equal (expected)
@@ -73,10 +76,32 @@ class HelloSpec extends FlatSpec with Matchers {
   		inputDimensions = List(3,3),
   		featureMaps = 1
   	)
-	val expected = List(2,2)
-	val actual = l.hiddenDimensions.toList
+  	val expected = List(2,2)
+  	val actual = l.hiddenDimensions.toList
+    actual should equal (expected)
+  }
 
-	actual should equal (expected)
+  it should "format deltas correctly" in {
+    val l = ConvolutionalLayer(
+      weights = DenseVector(1.0, 2.0, 3.0, 4.0).asDenseMatrix,
+      biases = DenseVector(1.0),
+      f = identity,
+      fPrime = identity,
+      lrfDimensions = List(2,2),
+      inputDimensions = List(3,3),
+      featureMaps = 1
+    )
+    val delta = DenseVector(1.0, 2.0, 3.0, 4.0).asDenseMatrix
+
+    val expected = DenseMatrix(
+      (1.0, 2.0, 0.0, 3.0, 4.0, 0.0, 0.0, 0.0, 0.0),
+      (0.0, 1.0, 2.0, 0.0, 3.0, 4.0, 0.0, 0.0, 0.0),
+      (0.0, 0.0, 0.0, 1.0, 2.0, 0.0, 3.0, 4.0, 0.0),
+      (0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 0.0, 3.0, 4.0))
+
+    val actual = l.deltaFormat(delta)
+
+    actual should equal (expected)
   }
 
   "The new delta method in layer" should "return the same value as the original Network.backprop" in {
@@ -94,11 +119,10 @@ class HelloSpec extends FlatSpec with Matchers {
  			val (outputs, activations) = n.feedforwardAccum(0)(List((e.input.asDenseMatrix.t, e.input.asDenseMatrix.t))).unzip
 
  			val deltaForFinalLayer = CostFuncs.meanSquareError.matrixDelta(activations.head, e.output.asDenseMatrix.t, outputs.head, n.layers.last.fPrime)
- 			println(s"deltaForFinalLayer $deltaForFinalLayer activations.head ${activations.head} e.output ${e.output} outputs.ast ${outputs.head}")
 
- 			val newDeltas = (List(deltaForFinalLayer) /: (n.layers.reverse.sliding(2).toList.zip(outputs.reverse.tail))) { case (deltas, (prevLayer :: (layer :: _), z)) =>
+ 			val newDeltas = (List(deltaForFinalLayer) /: (n.layers.reverse.sliding(2).toList.zip(outputs.reverse.tail))) { case (deltas, (lowerLayer :: (layer :: _), z)) =>
  				val (delta :: _) = deltas
- 				val nextDelta = layer.delta(z, delta, prevLayer.weights)
+ 				val nextDelta = layer.delta(lowerLayer, delta, z)
 
  				nextDelta :: deltas
  			}
@@ -110,7 +134,7 @@ class HelloSpec extends FlatSpec with Matchers {
  		}
   }
 
-  /*"A net with a FCL -> CVL" should "backpropogate correctly" in {
+  "A net with a FCL -> CVL" should "backpropogate correctly" in {
   	val fclWeightInit = (size : Int, numOfInputs : Int) => DenseMatrix.ones[Double](size, numOfInputs)
   	val fclBiasInit = (size : Int) => DenseVector.ones[Double](size)
   	val fcl = FullyConnectedLayer.gen(9, 9, identity, (d : Double) => 1.0, weightInit = fclWeightInit, biasInit = fclBiasInit)
@@ -119,20 +143,25 @@ class HelloSpec extends FlatSpec with Matchers {
   	val cvlBiasInit = (numOfFeatureMaps : Int) => DenseVector.ones[Double](numOfFeatureMaps)
   	val cvl = ConvolutionalLayer.gen(List(2,2), List(3,3), identity, (d : Double) => 1.0, 1, weightInit = cvlWeightInit, biasInit = cvlBiasInit)
 
-  	val input = DenseVector(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0).asDenseMatrix.t
-    val output = DenseVector(34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0).asDenseMatrix.t
+  	val input = DenseVector(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    //val output = DenseVector(34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0)
+    val output = DenseVector(34.0, 34.0, 34.0, 34.0)
 
-  	val (z0, a0) = fcl.feedforward(input)
+  	val (z0, a0) = fcl.feedforward(input.asDenseMatrix.t)
   	val (z1, a1) = cvl.feedforward(a0)
 
     val expectedDelta2 = DenseVector(
-      17.0, 17.0,
-      17.0, 17.0)
+      -17.0, -17.0,
+      -17.0, -17.0)
 
-    val expectedDelta1 - DenseVector(17.0, 34.0, 51.0, 17.0, 34.0, 51.0, 17.0, 34.0, 51.0)
+    //val expectedDelta1 = DenseVector(17.0, 34.0, 51.0, 17.0, 34.0, 51.0, 17.0, 34.0, 51.0)
+    val expectedDelta1 = DenseVector(-17.0, -34.0, -17.0, -34.0, -68.0, -34.0, -17.0, -34.0, -17.0)
 
     val n = Network(List(fcl, cvl))
 
-    val (_, deltas) = n.backprop(List(TrainingExample(input, output)), CostFuncs.meanSquareError)
-  }*/
+    val (_, deltas) = n.backprop(scala.collection.immutable.Vector(TrainingExample(input, output)), CostFuncs.meanSquareError)
+
+    deltas(1).asDenseMatrix.t should be (expectedDelta2.asDenseMatrix.t)
+    deltas(0).asDenseMatrix.t should be (expectedDelta1.asDenseMatrix.t)
+  }
 }

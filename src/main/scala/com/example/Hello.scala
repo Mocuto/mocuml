@@ -246,15 +246,17 @@ object Hello {
 			  case (_, _, _ :: List()) => return deltas
 
 			  //case ((restWeights :+ weight, headDelta :: _, restZ :+ z)) => {
-			  case((restLayers :+ Layer(w, _, _, fPrime), headDelta :: _, z :: restZ)) => {
-			  	val nextDelta = (w.t * headDelta) :*  (z map(x => fPrime(x)))
-			  	return calcDeltas(restLayers, nextDelta :: deltas, restZ)
+			  case(((restLayers :+ upperLayer) :+ lowerLayer, headDelta :: _, z :: restZ)) => {
+			  	//val nextDelta = (w.t * headDelta) :*  (z map(x => fPrime(x)))
+			  	val nextDelta = upperLayer.delta(lowerLayer, headDelta, z)
+			  	return calcDeltas(restLayers :+ upperLayer, nextDelta :: deltas, restZ)
 				}
 		  }
 
 		  val (iMatrix, oMatrix) = batchToIOMatrices(batch)
 			val last :: rest = feedforwardAccum(0)(List( (iMatrix, iMatrix)))
 			val (z, a) = last
+
 			val (restZ, restA) = ((List.empty[DMD], List.empty[DMD]) /: rest) { case ((zAccum, aAccum), (zR, aR)) => ((zAccum :+ zR), aR :: aAccum/*(aAccum :+ aR)*/) }
 
 			val lastLayer = layers.last
