@@ -4,7 +4,7 @@ import breeze.linalg._
 import breeze.numerics._
 import breeze.stats.distributions._
 
-//import scala.annotation.tailrec
+import scala.annotation.tailrec
 
 //import scala.concurrent.{ Future, Promise }
 //import scala.concurrent.ExecutionContext.Implicits.global
@@ -12,14 +12,14 @@ import breeze.stats.distributions._
 
 //import CostFuncs._
 
-import Hello.{ DMD, DVD }
+import Hello.{ DMD, DVD, timeThis }
 
 object Layer {
 
 	def unapply(l : Layer) = Option((l.weights, l.biases, l.f, l.fPrime))
 }
 
-trait Layer { this: { def copy(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : Layer} =>
+trait Layer {
 
 	val weights : DMD
 
@@ -33,6 +33,12 @@ trait Layer { this: { def copy(weights : DMD, biases : DVD, f : (Double => Doubl
 
 	def feedforward(input : DMD) : (DMD, DMD) // First DMD is the output, Second DMD is the activation, a = sigmoid(z)
 
+	def gradientBiases(delta : DMD) : DMD
+
+	def gradientWeights(delta : DMD, previousActivation : DMD) : DMD
+
+	def update(delta : DMD, lastActivation : DMD) : Layer
+
 	/**
 		Calculates the delta for this layer,
 
@@ -45,16 +51,15 @@ trait Layer { this: { def copy(weights : DMD, biases : DVD, f : (Double => Doubl
 
 	def +(that : Layer) = add(that)
 
-	def minus(that : Layer) = gen(weights - that.weights, biases - that.biases)
+	def minus(that : Layer) = gen(weights - that.weights, biases - that.biases, f, fPrime)
 
 	def -(that : Layer) = minus(that)
 
-	def mult(const : Double) = gen(weights * const, biases * const)
+	def mult(const : Double) = gen(weights * const, biases * const, f, fPrime)
 
 	def **(const : Double) = mult(const)
 
-	def gen(weights : DMD = weights, biases : DVD = biases, f : (Double => Double) = f, fPrime : (Double => Double) = fPrime) : Layer = copy(weights, biases, f, fPrime)
-
+	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : Layer
 
 }
 
@@ -88,6 +93,10 @@ case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Doubl
 	def delta(l : Layer, d : DMD, z : DMD) : DMD = {
 		return l.deltaByWeight(d) :* (z map (fPrime(_)))
 	}
+
+	def gradiantBias(delta : DMD) : Layer = return delta
+
+	def gen(weights : DMD = weights, biases : DVD = biases, f : (Double => Double) = f, fPrime : (Double => Double) = fPrime) = copy(weights, biases, f, fPrime)
 }
 
 trait InputFormatter {
@@ -105,20 +114,13 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 
 	val lrfDimensions : Seq[Int]
 	val inputDimensions : Seq[Int]
-	val slide = 1
+	val stride : Int
 
-	val hiddenDimensions : Seq[Int] = ((inputDimensions zip(lrfDimensions)) map { case (iD, lrfD) => 1 + (iD - lrfD) })
+	lazy val hiddenDimensions : Seq[Int] = ((inputDimensions zip(lrfDimensions)) map { case (iD, lrfD) => 1 + ((iD - lrfD) / stride) })
 
 	private def shapeFromDimensions(dim : Seq[Int]) : (Int, Int) = {
-		return ((dim.dropRight(1)).fold(1)(_ * _), dim.last)
-		/*if (dim.length == 1)
-		{
-			return (dim(0), 1)
-		}
-		else
-		{
-			return ((dim.dropRight(1)).fold(1)(_ * _), dim.last)
-		}*/
+		//return ((dim.dropRight(1)).fold(1)(_ * _), dim.last)
+		return (dim.head, dim.drop(1).fold(1)(_ * _))
 	}
 
 	lazy val inputShape = shapeFromDimensions(inputDimensions)
@@ -136,83 +138,94 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 		Formats it to be a matrix with dimensions: [localReceptiveFieldArea x number of input units]
 	*/
 	def deltaFormat(delta : DMD) : DMD = {
-		val square  = delta.reshape(hiddenShape._1, hiddenShape._2)
+		val noOfInputs = delta.cols
+		val square  = delta.reshape(hiddenShape._1, hiddenShape._2 * noOfInputs)
 
-		def recurse(r : Int, c : Int, accum : Option[DMD]) : Option[DMD] = {
+		def recurse(r : Int, c : Int, accum : Option[DMD], inputNum : Int) : DMD = {
 			val (nextCol, lastCol) = (r > inputShape._1 - 1, c >= inputShape._2 - 1)
-			if (lastCol && nextCol)
+			if (inputNum >= noOfInputs)
 			{
-				return accum
+				return accum getOrElse new DenseMatrix[Double](0, 0)
+			}
+			else if (lastCol && nextCol)
+			{
+				return recurse(0, 0, accum, inputNum + 1)
 			}
 			else if (nextCol)
 			{
-				return recurse(0, c + slide, accum)
+				return recurse(0, c + stride, accum, inputNum)
 			}
+			else
+			{
+				val slice = ({
+					val (overflowR, overflowC) = (r - lrfShape._1 + 1, c - lrfShape._2 + 1)
 
-			val slice = ({
-				val (overflowR, overflowC) = (r - lrfShape._1 + 1, c - lrfShape._2 + 1)
+					val zeros = DenseMatrix.zeros[Double](lrfShape._1, lrfShape._2)
 
-				val zeros = DenseMatrix.zeros[Double](lrfShape._1, lrfShape._2)
+					val (r0, r1) = (lrfShape._1 - (r + 1), lrfShape._1 * 2 - (r + 2))
+					val (c0, c1) = (lrfShape._2 - (c + 1), lrfShape._2 * 2 - (c + 2))
 
-				val (r0, r1) = (lrfShape._1 - (r + 1), lrfShape._1 * 2 - (r + 2))
-				val (c0, c1) = (lrfShape._2 - (c + 1), lrfShape._2 * 2 - (c + 2))
+					val cOffset = inputNum * inputShape._2
 
-				/*if(overflowR < 0 || overflowC < 0)
-				{
-					
-					zeros((lrfShape._1 - (r + 1)) until lrfShape._1, (lrfShape._2 - (c + 1)) until lrfShape._2) := square(0 to r, 0 to c)
-					//zeros((lrfShape._1 - 1) to (lrfShape._1 - (r + 1)) by -1, (lrfShape._2 - 1) to (lrfShape._2 - (c + 1)) by -1) := square(0 to r, 0 to c)
-				}
-				else
-				{
-					zeros(0 to (lrfShape._1 - (r - hiddenShape._1)), 0 to (lrfShape._2 - (c - hiddenShape._2))) := square(
-						(r - lrfShape._1) to math.max(r, hiddenShape._1),
-						(c - lrfShape._2) to math.max(c, hiddenShape._2))
-				}*/
-				val dstRangeR = math.max(0, r0) to math.min(lrfShape._1 - 1, r1)
-				val dstRangeC = math.max(0, c0) to math.min(lrfShape._2 -1, c1)
-				val srcRangeR = math.max(0, r - (lrfShape._1 - 1)) to math.min(hiddenShape._1 - 1, r)
-				val srcRangeC  = math.max(0, c - (lrfShape._2 - 1)) to math.min(hiddenShape._2 - 1, c)
+					val dstRangeR = math.max(0, r0) to math.min(lrfShape._1 - 1, r1)
+					val dstRangeC = math.max(0, c0) to math.min(lrfShape._2 -1, c1)
+					val srcRangeR = math.max(0, r - (lrfShape._1 - 1)) to math.min(hiddenShape._1 - 1, r)
+					val srcRangeC  = (cOffset + math.max(0, c - (lrfShape._2 - 1))) to (cOffset + math.min(hiddenShape._2 - 1, c))
 
-				zeros(dstRangeR, dstRangeC) := square(
-					srcRangeR,
-					srcRangeC
-				)
-				zeros
-			}).reshape(lrfShape._1 * lrfShape._2, 1)
+					zeros(dstRangeR, dstRangeC) := square(
+						srcRangeR,
+						srcRangeC
+					)
+					zeros
+				}).reshape(lrfShape._1 * lrfShape._2, 1)
 
-			val next = accum match {
-				case None => Some(slice)
-				case Some(value : DMD) => Some(DenseMatrix.horzcat(value, slice))
+				val next = accum.map(s => DenseMatrix.horzcat(s, slice))
+
+				return recurse(r + stride, c, Some(next getOrElse (slice)), inputNum)
 			}
-
-			return recurse(r + slide, c, next)
+			
 		}
 
-		val unflipped = recurse(0, 0, None).getOrElse(DenseMatrix.zeros[Double](lrfShape._1 * lrfShape._2, inputShape._1 * inputShape._2))
-		
+		val unflipped = recurse(0, 0, None, 0)
+
 		return flipud(unflipped)
 	}
 
-	def format(i : DMD) : DMD = {
+	
+	final def format(i : DMD) : DMD = {
 
-		val square = i.reshape(inputShape._1, inputShape._2)
+		val noOfInputs = (i.rows * i.cols) / (inputShape._1 * inputShape._2)
+		val square = i.reshape(inputShape._1, inputShape._2 * noOfInputs)
 
-		def recurse(r : Int, c : Int, accum : DMD) : DMD = {
+		println("format")
+
+		//@tailrec
+		def recurse(r : Int, c : Int, accum : Option[DMD], inputNum : Int) : DMD = {
 			//TODO: Implement for batch inputs
 			val (lastCol, nextCol) = (c + lrfShape._2 >= inputShape._2, r + lrfShape._1 > inputShape._1)
-			if(lastCol && nextCol) {
-				return accum
+		
+			if (inputNum >= noOfInputs)
+			{
+				return timeThis("recurse base case") { accum getOrElse new DenseMatrix[Double](0,0) }
 			}
-			if(nextCol) {
-				return recurse(0, c + 1, accum)
+			else if (lastCol && nextCol)
+			{
+				return timeThis(s"recurse input $inputNum") { recurse(0, 0, accum, inputNum + 1) }
 			}
-			val next = DenseMatrix.horzcat(accum, square(r until (r + lrfShape._1), c until (c + lrfShape._2)).reshape(lrfShape._1 * lrfShape._2, 1))
+			else if (nextCol)
+			{
+				return recurse(0, c + stride, accum, inputNum)
+			}
+			else
+			{
+				val iC = c + (inputNum * inputShape._2)
+				val slice = square(r until (r + lrfShape._1), iC until (iC + lrfShape._2)).reshape(lrfShape._1 * lrfShape._2, 1, View.Copy)
+				val next = accum map (s => DenseMatrix.horzcat(s, slice))
 
-			return recurse(r + slide, c, next)
+				return recurse(r + stride, c, Some(next getOrElse (slice)), inputNum)
+			}
 		}
-		val start = square(0 until lrfShape._1, 0 until lrfShape._2).reshape(lrfShape._1 * lrfShape._2, 1)
-		return recurse(1, 0, start)
+		return timeThis("formatRecurse"){recurse(0, 0, None, 0)}
 	}
 
 	/**
@@ -239,7 +252,8 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 		c3
 	*/
 	def unformat(i : DMD) : DMD = {
-		return i.t.reshape(i.rows * i.cols, 1, false)
+		val noOfInputs = i.cols / (hiddenShape._1 * hiddenShape._2)
+		return i.t.reshape(hiddenShape._1 * hiddenShape._2 * lrfShape._1 * lrfShape._2, noOfInputs, false)
 	}
 }
 
@@ -275,32 +289,44 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 		inputDimensions : Seq[Int],
 		featureMaps : Int) extends Layer with LocalReceptiveFieldFormatter {
 
+	val stride = 1
+
 	val hiddenArea = hiddenShape._1 * hiddenShape._2
 
-	def copy(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : ConvolutionalLayer = this.copy(weights, biases, f, fPrime)
+	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : ConvolutionalLayer = this.copy(weights, biases, f, fPrime)
 
+	/*
+		Expects input in linear format, where each column is a separate input
+	*/
 	def feedforward(input : DMD) : (DMD, DMD) = {
-		//val wA = weights * format(input)
-		//val z = wA(::, *) + biases
-
-		//return (z, z.map(f(_)))
 
 		val wA = format(input).t * weights.t
 		val z = wA(*, ::) + biases
 
-		return (z.reshape(hiddenArea, 1), z.map(f(_)).reshape(hiddenArea, 1))
+		val noOfInputs = input.cols
+
+		println(s"feedforward conv $noOfInputs $hiddenArea ${z.rows} ${z.cols}")
+
+		val zShaped = z.reshape(hiddenArea * featureMaps, noOfInputs)
+
+		println("feedforward conv")
+
+		return (zShaped, zShaped.map(f(_)))
 	}
 
 	/**
 		Expects delta in a linear format
 	*/
 	def deltaByWeight(delta : DMD) : DMD = {
+		val noOfInputs = delta.cols
 		val hu = hiddenShape._1 * hiddenShape._2 // Number of hidden units per feature map
-		return (0 until featureMaps *  hu by hu).foldLeft(new DenseMatrix[Double](0,1)) { (accum, i) => //This map will be performed for each feature map
-			val d = delta(i until (i + hu), 0 to 0) // Slice the hidden units from one feature map
+		val iu = inputShape._1 * inputShape._2;
+		return (0 until featureMaps *  hu by hu).foldLeft(DenseMatrix.zeros[Double](iu, noOfInputs)/*new DenseMatrix[Double](0,1)*/) { (accum, i) => //This map will be performed for each feature map
+			val d = delta(i until (i + hu), 0 until noOfInputs) // Slice the hidden units from one feature map
 
 			val dbd = (weights(i / hu to i / hu, ::) * deltaFormat(d))
-			DenseMatrix.vertcat(accum, dbd.reshape(dbd.rows * dbd.cols, 1))
+			//DenseMatrix.vertcat(accum, dbd.reshape(dbd.rows * dbd.col, noOfInputs))
+			accum + dbd.reshape(iu, noOfInputs)
 		}
 	}
 
@@ -309,12 +335,82 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 	}
 }
 
-/*object PoolLayer {
-	def gen(
-		layerDimensions : Seq[Int],
-		inputDimensions : Seq[Int],
-		f : (Double => Double),
-		fPrime : (Double => Double),
-		numOfFeatureMaps : Int,
-	)
-}*/
+object MaxPoolLayer {
+	def gen(lrfDimensions : Seq[Int], inputDimensions : Seq[Int]) = 
+		MaxPoolLayer(new DenseMatrix[Double](0,0), DenseVector[Double](), identity, identity, lrfDimensions, inputDimensions)
+}
+
+case class MaxPoolLayer(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double), lrfDimensions : Seq[Int], inputDimensions : Seq[Int]) extends Layer with LocalReceptiveFieldFormatter
+{
+	private var argmaxes = Array.empty[Int]
+
+	val stride = 2
+	override lazy val hiddenDimensions : Seq[Int] = 
+		((inputDimensions.take(2) zip(lrfDimensions.take(2))) map { case (iD, lrfD) => 1 + ((iD - lrfD) / stride) }) ++ 
+			List.tabulate(inputDimensions.size - 2) { i => inputDimensions(i + 2)}
+
+	val hiddenArea = hiddenShape._1 * hiddenShape._2
+
+	println(s"$hiddenDimensions")
+
+	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : MaxPoolLayer = this.copy(weights, biases, f, fPrime)
+
+	def feedforward(input : DMD) : (DMD, DMD) = {
+
+		val noOfInputs = input.cols
+		val x = format(input)
+		
+		argmaxes = argmax(x(::, *)).t.data
+		println(s"maxpool feedforward $hiddenArea $noOfInputs ${x.rows} ${x.cols}")
+		println(max(x(::, *)).t.asDenseMatrix)
+		val maxes = max(x(::, *)).t.asDenseMatrix.reshape(hiddenArea, noOfInputs, View.Copy)
+		println("maxes")
+		return (maxes, maxes)
+	}
+
+	def delta(l : Layer, d : DMD, z : DMD) : DMD = return l.deltaByWeight(d)
+
+	def deltaByWeight(delta : DMD) : DMD = {
+		val d = DenseMatrix.zeros[Double](inputShape._1, inputShape._2)
+		for((maxIndex, fieldIndex) <- argmaxes.zipWithIndex) {
+			val r = (fieldIndex % hiddenShape._1) + (maxIndex % lrfShape._1)
+			val c = (fieldIndex / hiddenShape._1) + (maxIndex / lrfShape._1)
+			d(r to r, c to c) := delta(fieldIndex, 0)
+		}
+		return d.reshape(d.rows * d.cols, 1)
+	}
+}
+
+case class SoftMaxLayer(weights : DMD, biases : DVD, f : (Double => Double) = identity, fPrime : (Double => Double) = identity) extends Layer {
+	def deltaByWeight(delta : DMD) : DMD = return weights.t * delta
+
+	def feedforward(input : DMD) : (DMD, DMD) = {
+		val wA = weights * input
+	  val z = wA(::, *) + biases;
+
+	  return (z, activate(z))
+	}
+
+	def activate(z : DMD) : DMD = {
+		val expZ = exp(z)
+		val summed = sum(expZ(::, *))
+		val divided = expZ.mapPairs { case ((_, c), x) => x / summed(c) }
+
+		return divided
+	}
+
+	def actPrime(z : DMD) : DMD = {
+		val expZ = exp(z)
+		val summed = sum(expZ(::, *))
+		val summedSquared = pow(summed, 2.0)
+
+		return expZ.mapPairs { case ((_,c), x) => x * (summed(c) - x) / summedSquared(c) }
+	}
+
+	def delta(l : Layer, d : DMD, z : DMD) : DMD = {
+		return l.deltaByWeight(d) :* actPrime(z)
+	}
+
+	def gen(weights : DMD = weights, biases : DVD = biases, f : (Double => Double) = f, fPrime : (Double => Double) = fPrime) = copy(weights, biases, f, fPrime)
+
+}

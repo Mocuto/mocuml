@@ -104,7 +104,9 @@ object Hello {
 			case List() => return (n, velocity)
 			case batch :: rest => {
 
+				println("before backprop")
 				val (gradWs, gradBs) = n.backprop(batch, costFunc)
+				println("after backprop")
 
 				//val velW = gradWs.zip(velocity.weights).map { case (gradW, vW) => (vW * momentum) - (gradW * (learningRate / batch.length)) }
 				//val velB = gradBs.zip(velocity.biases).map { case (gradB, vB) => (vB * momentum) - (gradB * (learningRate / batch.length)) }
@@ -115,17 +117,24 @@ object Hello {
 				 	(vW, vB, _, _) = Layer.unapply(vl).get
 				} yield {
 
+					println(s"yield ${gradB.size}")
 					val velLayer = vl.gen(
 						weights = (vW * momentum) - (gradW * (learningRate / batch.length)),
-						biases = (vB * momentum) - (gradB * (learningRate / batch.length))
+						biases = (vB * momentum) - (gradB * (learningRate / batch.length)),
+						f = vl.f,
+						fPrime = vl.fPrime
 					)
+					println("velLayer")
 					val newL = l.gen(
 						weights = (w * (1.0 - lambdaPerSize)) + velLayer.weights,
-						biases = b + velLayer.biases
+						biases = b + velLayer.biases,
+						f = l.f,
+						fPrime = l.fPrime
 					)
-
+					println("newL")
 					(newL, velLayer)
 				}).unzip
+				println("new layers, vellayers")
 
 				val newVel = Network(velLayers)//Network(velW, velB, n.f, n.fPrime)
 				val newN = Network(newLayers)
@@ -146,7 +155,7 @@ object Hello {
 
     def empty = Network(List())
 
-    def withIdentityActivation(layers : List[Layer]) : Network = Network(layers.map(_.gen(f = identity, fPrime = identity)))
+    def withIdentityActivation(layers : List[Layer]) : Network = Network(layers.map(l => l.gen(l.weights, l.biases, f = identity, fPrime = identity)))
 
     def withLayerSizes(sizes : List[Int], f : (Double => Double), fPrime : (Double => Double)) : Network =
     	Network((sizes.sliding(2) map { case List(a, b) => FullyConnectedLayer(
@@ -221,7 +230,8 @@ object Hello {
 	    }
 	    else
 	    {
-	    	val accumulated = (previousActivations /: layers) ((accum, l) => {
+	    	val accumulated = (previousActivations /: layers.drop(fromLayerIndex)) ((accum, l) => {
+	    		println("feedforwardAccum")
 	    		//val wTimesA = (l.weights * accum.last._2)
 	    		//val z = wTimesA(::, *) + l.biases
 	    		l.feedforward(accum.head._2) :: accum
@@ -249,12 +259,16 @@ object Hello {
 			  case(((restLayers :+ upperLayer) :+ lowerLayer, headDelta :: _, z :: restZ)) => {
 			  	//val nextDelta = (w.t * headDelta) :*  (z map(x => fPrime(x)))
 			  	val nextDelta = upperLayer.delta(lowerLayer, headDelta, z)
+			  	println("nextDelta")
+			  	println(nextDelta)
 			  	return calcDeltas(restLayers :+ upperLayer, nextDelta :: deltas, restZ)
 				}
 		  }
 
 		  val (iMatrix, oMatrix) = batchToIOMatrices(batch)
+		  
 			val last :: rest = feedforwardAccum(0)(List( (iMatrix, iMatrix)))
+			println("backprop feedforward")
 			val (z, a) = last
 
 			val (restZ, restA) = ((List.empty[DMD], List.empty[DMD]) /: rest) { case ((zAccum, aAccum), (zR, aR)) => ((zAccum :+ zR), aR :: aAccum/*(aAccum :+ aR)*/) }
@@ -262,15 +276,19 @@ object Hello {
 			val lastLayer = layers.last
 
 			val deltaForFinalLayer = costFunc.matrixDelta(a, oMatrix, z, lastLayer.fPrime)
+			println("deltaForFinalLayer")
 
 		  //val deltas = calcDeltas(weights, List(deltaForFinalLayer), restZ)
 		  val deltas = calcDeltas(layers, List(deltaForFinalLayer), restZ)
+		  println("deltas")
 
 		  val dAndA = deltas.zip(restA)
 
 		  val (gradWs, gradBs) = (((List.empty[DMD], List.empty[DVD]) /: dAndA) {
 		  	case ((ws, bs), (d, prevA)) => ((d * prevA.t) :: ws, sum(d(*, ::)) :: bs)
 		  })
+
+		  println("gradW grad B")
 
 		  return (gradWs.reverse, gradBs.reverse)
 		  //return dAndA.foldLeft(Network.empty(f, fPrime)) {
@@ -377,9 +395,35 @@ object Hello {
 		//println(s"feedforward basic test: ${n.feedforward(List(1.0, 1.0))}")
 		println(DenseMatrix((1.0, 2.0), (2.0, 3.0)) * DenseMatrix((1.0, 2.0), (2.0, 3.0)))
 		val td = getMNISTData
-		val n = Network.withLayerSizes(List(28 * 28, 30, 10), sigmoid, sigmoidPrime)
+		//val n = Network.withLayerSizes(List(28 * 28, 30, 10), sigmoid, sigmoidPrime)
+		def fclweightInit(size : Int, numOfInputs : Int) = DenseMatrix.rand(size, numOfInputs, Rand.gaussian).map(_ / math.sqrt(numOfInputs.toDouble))
+		def convWeightInit(lrfDimensions : Seq[Int], numOfFeatureMaps : Int) : DMD = DenseMatrix.rand[Double](numOfFeatureMaps, lrfDimensions.reduce(_ * _)).map(_ / math.sqrt(lrfDimensions.reduce(_ * _)))
+		val n = 
+			Network(
+				List(
+					ConvolutionalLayer.gen(
+						lrfDimensions = List(5, 5),
+						inputDimensions = List(28, 28),
+						numOfFeatureMaps = 20,
+						f = sigmoid,
+						fPrime = sigmoidPrime,
+						weightInit = convWeightInit
+					),
+					MaxPoolLayer.gen(
+						lrfDimensions = List(2, 2, 1),
+						inputDimensions = List(24,24,20)
+					),
+					FullyConnectedLayer.gen(
+						size = 10,
+						numOfInputs = 12 * 12 * 20,
+						f = sigmoid,
+						fPrime = sigmoidPrime,
+						weightInit = fclweightInit
+					)
+				)
+			)
 		val t = new Trainer(crossEntropy) with DefaultReporter with DefaultAssessor[CostFuncs.CrossEntropyCostFunc]
-		val hp = TrainingParameters(10, 30, 0.5, momentum = 0.0, lmbda = 0.0)
+		val hp = TrainingParameters(1, 30, 0.5, momentum = 0.0, lmbda = 0.0)
 		td.map (data => t.train(n, data, hp)).map(f => concurrent.Await.result(f, concurrent.duration.Duration.Inf))
 		Thread.sleep(2000)
 		/*val n = Network.withLayerSizes(List(2,1), sigmoid, sigmoidPrime)

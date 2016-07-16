@@ -60,7 +60,7 @@ class HelloSpec extends FlatSpec with Matchers {
   	val input = DenseMatrix(
       (1.0,2.0,3.0),
       (4.0,5.0,6.0),
-      (7.0, 8.0, 9.0))
+      (7.0, 8.0, 9.0)).reshape(9, 1)
   	val (actualZ, actualA) = l.feedforward(input)
 
   	actualZ should equal (expected)
@@ -91,7 +91,7 @@ class HelloSpec extends FlatSpec with Matchers {
       inputDimensions = List(3,3),
       featureMaps = 1
     )
-    val delta = DenseVector(1.0, 2.0, 3.0, 4.0).asDenseMatrix
+    val delta = new DenseMatrix(4, 1, Array(1.0, 2.0, 3.0, 4.0))
 
     val expected = DenseMatrix(
       (1.0, 2.0, 0.0, 3.0, 4.0, 0.0, 0.0, 0.0, 0.0),
@@ -163,5 +163,42 @@ class HelloSpec extends FlatSpec with Matchers {
 
     deltas(1).asDenseMatrix.t should be (expectedDelta2.asDenseMatrix.t)
     deltas(0).asDenseMatrix.t should be (expectedDelta1.asDenseMatrix.t)
+  }
+
+  "MaxPoolLayer" should "feedforward correctly" in {
+    val input = new DenseMatrix(9, 1, Array[Double](1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
+
+    /** As square matrix
+        1.0 4.0 7.0
+        2.0 5.0 8.0
+        3.0 6.0 9.0
+    */
+
+    val l  = MaxPoolLayer.gen(lrfDimensions = List(2,2), inputDimensions = List (3,3))
+    val expected = new DenseMatrix(4, 1, Array[Double](5.0, 6.0, 8.0, 9.0))
+    val (actual, _) = l.feedforward(input)
+
+    actual should be (expected)
+  }
+
+  it should "deltaByWeight correctly" in {
+    val input = new DenseMatrix(9, 1, Array[Double](1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
+
+    /** As square matrix
+        1.0 4.0 7.0
+        2.0 5.0 8.0
+        3.0 6.0 9.0
+    */
+
+    val l  = MaxPoolLayer.gen(lrfDimensions = List(2,2), inputDimensions = List (3,3))
+
+    val delta = new DenseMatrix(4, 1, Array[Double](-5.0, -6.0, -8.0, -9.0))
+
+    val expected = new DenseMatrix(9, 1, Array[Double](0.0, 0.0, 0.0, 0.0, -5.0, -6.0, 0.0, -8.0, -9.0))
+
+    l.feedforward(input)
+    val actual = l.deltaByWeight(delta)
+
+    actual should be (expected)
   }
 }
