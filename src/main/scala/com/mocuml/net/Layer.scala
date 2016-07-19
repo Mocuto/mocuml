@@ -130,7 +130,7 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 	lazy val hiddenShape = shapeFromDimensions(hiddenDimensions)
 
 
-	/** 
+	/**
 		Formats the delta to be used during the backprop algorithm
 
 		Expects input  to be in linear column format, ordered in ascending order by position within original data, with inner dimensions ascending before outer ones
@@ -183,7 +183,7 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 
 				return recurse(r + stride, c, Some(next getOrElse (slice)), inputNum)
 			}
-			
+
 		}
 
 		val unflipped = recurse(0, 0, None, 0)
@@ -191,7 +191,6 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 		return flipud(unflipped)
 	}
 
-	
 	final def format(i : DMD) : DMD = {
 
 		val noOfInputs = (i.rows * i.cols) / (inputShape._1 * inputShape._2)
@@ -203,7 +202,7 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 		def recurse(r : Int, c : Int, accum : Option[DMD], inputNum : Int) : DMD = {
 			//TODO: Implement for batch inputs
 			val (lastCol, nextCol) = (c + lrfShape._2 >= inputShape._2, r + lrfShape._1 > inputShape._1)
-		
+
 			if (inputNum >= noOfInputs)
 			{
 				return timeThis("recurse base case") { accum getOrElse new DenseMatrix[Double](0,0) }
