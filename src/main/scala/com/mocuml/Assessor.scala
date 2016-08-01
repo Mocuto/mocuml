@@ -1,4 +1,4 @@
-package com.example
+package com.mocuml
 
 import breeze.linalg._
 

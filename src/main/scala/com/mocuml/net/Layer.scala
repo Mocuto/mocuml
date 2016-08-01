@@ -1,4 +1,4 @@
-package com.example
+package com.mocuml.net
 
 import breeze.linalg._
 import breeze.numerics._
@@ -12,32 +12,44 @@ import scala.annotation.tailrec
 
 //import CostFuncs._
 
-import Hello.{ DMD, DVD, timeThis }
+import com.mocuml.Hello.{ DMD, DVD, timeThis, TrainingParameters }
+import com.mocuml.learning._
 
-object Layer {
-
-	def unapply(l : Layer) = Option((l.weights, l.biases, l.f, l.fPrime))
+trait Activation {
+	val a : DMD
+	val aPrime : DMD
+	val z : DMD
 }
 
-trait Layer {
+object LayAct {
+	def apply(z : DMD) : LayAct = LayAct(z,z,z)
+}
 
+case class LayAct(a : DMD, aPrime : DMD, z : DMD) extends Activation
+
+trait UsesWeights[A <: Layer with UsesWeights[A]] { this : A =>
+	type Self = A with UsesWeights[A] with Layer
 	val weights : DMD
 
 	val biases : DVD
 
-	val f : (Double => Double)
+	def gen(weights : DMD, biases : DVD) : A
 
-	val fPrime : (Double => Double)
+	def genTrainLay(tp : TrainingParameters) = TrainLay(this, tp)
+}
+
+trait Layer {
+
+	//val f : (Double => Double)
+
+	//val fPrime : (Double => Double)
 
 	def deltaByWeight(delta : DMD) : DMD
 
-	def feedforward(input : DMD) : (DMD, DMD) // First DMD is the output, Second DMD is the activation, a = sigmoid(z)
+	//def feedforward(input : DMD) : (DMD, DMD) // First DMD is the output, Second DMD is the activation, a = sigmoid(z)
 
-	def gradientBiases(delta : DMD) : DMD
+	def feedforward(input : Activation) : Activation
 
-	def gradientWeights(delta : DMD, previousActivation : DMD) : DMD
-
-	def update(delta : DMD, lastActivation : DMD) : Layer
 
 	/**
 		Calculates the delta for this layer,
@@ -45,9 +57,9 @@ trait Layer {
 		output - An assumed "z" that this layer produced
 		lastDelta - The delta for the layer after this one (which precedes this layer in the backprop algo)
 	*/
-	def delta(l : Layer, d : DMD, z : DMD) : DMD
+	def delta(l : Layer, d : DMD, act : Activation) : DMD
 
-	def add(that : Layer) = gen(weights + that.weights, biases + that.biases, f, fPrime)
+	/*def add(that : Layer) = gen(weights + that.weights, biases + that.biases, f, fPrime)
 
 	def +(that : Layer) = add(that)
 
@@ -59,7 +71,7 @@ trait Layer {
 
 	def **(const : Double) = mult(const)
 
-	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : Layer
+	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : Layer*/
 
 }
 
@@ -80,23 +92,22 @@ object FullyConnectedLayer {
 	)
 }
 
-case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) extends Layer {
+case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) extends Layer with UsesWeights[FullyConnectedLayer] with FullyConnectedGradBuilder {
 
 	def deltaByWeight(delta : DMD) : DMD = return weights.t * delta
 
-	def feedforward(input : DMD) : (DMD, DMD) = {
+	def feedforward(input : DMD) : Activation = {
 		val wA = weights * input
 	  val outputs = wA(::, *) + biases;
-	  return (outputs, outputs.map(x => f(x)))
+
+	  return LayAct(a = outputs.map(x => f(x)), aPrime = outputs.map(x => fPrime(x)),  z = outputs)
 	}
 
-	def delta(l : Layer, d : DMD, z : DMD) : DMD = {
-		return l.deltaByWeight(d) :* (z map (fPrime(_)))
+	def delta(l : Layer, d : DMD, act : Activation) : DMD = {
+		return l.deltaByWeight(d) :* act.aPrime
 	}
 
-	def gradiantBias(delta : DMD) : Layer = return delta
-
-	def gen(weights : DMD = weights, biases : DVD = biases, f : (Double => Double) = f, fPrime : (Double => Double) = fPrime) = copy(weights, biases, f, fPrime)
+	def gen(weights : DMD = weights, biases : DVD = biases) = copy(weights, biases, f, fPrime)
 }
 
 trait InputFormatter {
@@ -283,21 +294,25 @@ object ConvolutionalLayer {
 	)
 }
 
-case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double),
+case class ConvolutionalLayer(
+		weights : DMD,
+		biases : DVD,
+		f : (Double => Double),
+		fPrime : (Double => Double),
 		lrfDimensions : Seq[Int], //Dimensions for the local receptive field
 		inputDimensions : Seq[Int],
-		featureMaps : Int) extends Layer with LocalReceptiveFieldFormatter {
+		featureMaps : Int) extends Layer with UsesWeights[ConvolutionalLayer] with ConvolutionalGradBuilder with LocalReceptiveFieldFormatter {
 
 	val stride = 1
 
 	val hiddenArea = hiddenShape._1 * hiddenShape._2
 
-	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : ConvolutionalLayer = this.copy(weights, biases, f, fPrime)
+	def gen(weights : DMD, biases : DVD) = this.copy(weights, biases, f, fPrime)
 
 	/*
 		Expects input in linear format, where each column is a separate input
 	*/
-	def feedforward(input : DMD) : (DMD, DMD) = {
+	def feedforward(input : DMD) : Activation = {
 
 		val wA = format(input).t * weights.t
 		val z = wA(*, ::) + biases
@@ -310,7 +325,7 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 
 		println("feedforward conv")
 
-		return (zShaped, zShaped.map(f(_)))
+		return LayAct(z = zShaped, a = zShaped.map(f(_)), aPrime = zShaped.map(fPrime(_)))
 	}
 
 	/**
@@ -335,7 +350,7 @@ case class ConvolutionalLayer(weights : DMD, biases : DVD, f : (Double => Double
 }
 
 object MaxPoolLayer {
-	def gen(lrfDimensions : Seq[Int], inputDimensions : Seq[Int]) = 
+	def gen(lrfDimensions : Seq[Int], inputDimensions : Seq[Int]) =
 		MaxPoolLayer(new DenseMatrix[Double](0,0), DenseVector[Double](), identity, identity, lrfDimensions, inputDimensions)
 }
 
@@ -344,27 +359,27 @@ case class MaxPoolLayer(weights : DMD, biases : DVD, f : (Double => Double), fPr
 	private var argmaxes = Array.empty[Int]
 
 	val stride = 2
-	override lazy val hiddenDimensions : Seq[Int] = 
-		((inputDimensions.take(2) zip(lrfDimensions.take(2))) map { case (iD, lrfD) => 1 + ((iD - lrfD) / stride) }) ++ 
+	override lazy val hiddenDimensions : Seq[Int] =
+		((inputDimensions.take(2) zip(lrfDimensions.take(2))) map { case (iD, lrfD) => 1 + ((iD - lrfD) / stride) }) ++
 			List.tabulate(inputDimensions.size - 2) { i => inputDimensions(i + 2)}
 
 	val hiddenArea = hiddenShape._1 * hiddenShape._2
 
 	println(s"$hiddenDimensions")
 
-	def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : MaxPoolLayer = this.copy(weights, biases, f, fPrime)
+	//def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : MaxPoolLayer = this.copy(weights, biases, f, fPrime)
 
-	def feedforward(input : DMD) : (DMD, DMD) = {
+	def feedforward(input : DMD) : Activation = {
 
 		val noOfInputs = input.cols
 		val x = format(input)
-		
+
 		argmaxes = argmax(x(::, *)).t.data
 		println(s"maxpool feedforward $hiddenArea $noOfInputs ${x.rows} ${x.cols}")
 		println(max(x(::, *)).t.asDenseMatrix)
 		val maxes = max(x(::, *)).t.asDenseMatrix.reshape(hiddenArea, noOfInputs, View.Copy)
 		println("maxes")
-		return (maxes, maxes)
+		return LayAct(a = maxes, z = maxes, aPrime = DenseMatrix.ones[Double](maxes.rows, maxes.cols))
 	}
 
 	def delta(l : Layer, d : DMD, z : DMD) : DMD = return l.deltaByWeight(d)
@@ -383,11 +398,11 @@ case class MaxPoolLayer(weights : DMD, biases : DVD, f : (Double => Double), fPr
 case class SoftMaxLayer(weights : DMD, biases : DVD, f : (Double => Double) = identity, fPrime : (Double => Double) = identity) extends Layer {
 	def deltaByWeight(delta : DMD) : DMD = return weights.t * delta
 
-	def feedforward(input : DMD) : (DMD, DMD) = {
+	def feedforward(input : DMD) : Activation = {
 		val wA = weights * input
 	  val z = wA(::, *) + biases;
 
-	  return (z, activate(z))
+	  return LayAct(z = z, a = activate(z), aPrime = actPrime(z))
 	}
 
 	def activate(z : DMD) : DMD = {

@@ -1,9 +1,11 @@
-package com.example
+package com.mocuml.reporting
 
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Success, Failure}
-import Hello.{ Network, TrainingData, TrainingParameters, TrainingResult }
+import com.mocuml.Hello.{ Network, TrainingData, TrainingParameters, TrainingResult }
+import com.mocuml.{ CostFuncs, DefaultAssessor, NetworkAssessment }
+import com.mocuml.learning._
 
 case class DiagnosticsResponse(msg : String)
 
@@ -19,7 +21,7 @@ trait Reporter {
 		return trainingFut
 	}
 
-	final protected def whenEpochStarts(n : Network, td : TrainingData, hp : TrainingParameters, epochsLeft : Int)(func : => (Network, Network)) : (Network, Network) = {
+	final protected def whenEpochStarts(n : Network, td : TrainingData, hp : TrainingParameters, epochsLeft : Int)(func : => (Network, List[Option[TrainLay[_]]])) : (Network, List[Option[TrainLay[_]]]) = {
 		val onEpochCompleted = onEpochStarted(n, td, hp, epochsLeft)
 		val (newN, v) = func
 

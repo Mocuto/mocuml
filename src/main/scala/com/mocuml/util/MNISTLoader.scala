@@ -1,11 +1,11 @@
-package com.example
+package com.mocuml.util
 
 import scala.util.{ Success, Try }
 
 import java.io.{ BufferedInputStream, FileInputStream }
 import java.nio.channels.FileChannel
 
-import Hello.timeThis
+import com.mocuml.Hello.timeThis
 
 case class MNISTImage(rows : Int, cols : Int, data : Array[Int])
 
