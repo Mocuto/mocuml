@@ -11,7 +11,7 @@ object TrainLay {
 
 case class TrainLay[A <: Layer with UsesWeights[A]](layer : A, trainingParameters : TrainingParameters, velocity : Grad[A]) {
 
-	def update(grad : Grad[A], batchSize : Int, lambdaPerSize : Double) : TrainLay[A] = {
+	def update(grad : Grad[_], batchSize : Int, lambdaPerSize : Double) : TrainLay[A] = {
 		val newVel = Gradient[A](
 			weights = (velocity.weights * trainingParameters.momentum) - (grad.weights * (trainingParameters.learningRate / batchSize)),
 			biases = (velocity.biases * trainingParameters.momentum) - (grad.biases * (trainingParameters.learningRate / batchSize))

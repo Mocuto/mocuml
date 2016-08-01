@@ -23,6 +23,8 @@ import com.mocuml.util._
 
 object Hello {
 
+	case class GradLayPair[A <: Layer](grad : Grad[A], lay : Layer)
+
   type DMD = DenseMatrix[Double]
   type DVD = DenseVector[Double]
 
@@ -120,18 +122,18 @@ object Hello {
 				val hasDeltas = n.backprop(batch, costFunc)
 				println("after backprop")
 
-				val (newTrainLays, newLayers) = (for {
-							i <- 0 until traininglays.size;
-							l = n.layers(i);
-							trainlay = traininglays(i);
-							grad = hasDeltas(i)
-						} yield ((trainlay, grad) match {
-					case (Some(tl : TrainLay[a]), Some(g : Grad[a])) => {
-						val newTl = tl.update(g, batch.size, lambdaPerSize)
-					 (Some(newTl), newTl.layer)
+				val (newTrainLays, newLayers) = ((List.empty[Option[TrainLay[_]]], List.empty[Layer]) /: (0 until traininglays.size)) { case ((aTL, aL), i) =>
+					val l = n.layers(i);
+
+					(traininglays(i), hasDeltas(i)) match {
+						case (Some(tl : TrainLay[_]), Some(g : Grad[_])) => {
+							val newTl = tl.update(g, batch.size, lambdaPerSize)
+						 (Some(newTl), newTl.layer)
+						}
+						case _ => (None, l)
 					}
-					case _ => (None, l)
-				})).unzip
+				}
+
 				return applyBatches(Network(newLayers.toList), newTrainLays.toList, rest, lambdaPerSize)
 
 				/*
@@ -172,8 +174,6 @@ object Hello {
 					n.fPrime)*/
 
 				return applyBatches(newN, rest, learningRate, momentum, lambdaPerSize, newVel)*/
-
-				
 			}
 		}
   }
