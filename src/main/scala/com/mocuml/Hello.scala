@@ -61,7 +61,7 @@ object Hello {
 			val p = Promise[TrainingResult]
 
 			val tls = n.layers.map(l => l match {
-				case uwl : UsesWeights[A forSome {type A <: Layer with UsesWeights[A]}]  => Some(uwl.genTrainLay(hp))
+				case uwl : UsesWeights[_]  => Some(uwl.genTrainLay(hp))
 				case _ => None
 			})
 
@@ -122,15 +122,15 @@ object Hello {
 				val hasDeltas = n.backprop(batch, costFunc)
 				println("after backprop")
 
-				val (newTrainLays, newLayers) = ((List.empty[Option[TrainLay[_]]], List.empty[Layer]) /: (0 until traininglays.size)) { case ((aTL, aL), i) =>
+				val (newTrainLays, newLayers) = ((List.empty[Option[TrainLay[_]]], List.empty[Layer]) /: ((traininglays.size - 1) to 0 by -1)) { case ((aTL, aL), i) =>
 					val l = n.layers(i);
 
 					(traininglays(i), hasDeltas(i)) match {
 						case (Some(tl : TrainLay[_]), Some(g : Grad[_])) => {
 							val newTl = tl.update(g, batch.size, lambdaPerSize)
-						 (Some(newTl), newTl.layer)
+						 (Some(newTl) :: aTL, newTl.layer :: aL)
 						}
-						case _ => (None, l)
+						case _ => (None :: aTL, l :: aL)
 					}
 				}
 

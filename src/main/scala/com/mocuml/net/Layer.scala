@@ -96,8 +96,8 @@ case class FullyConnectedLayer(weights : DMD, biases : DVD, f : (Double => Doubl
 
 	def deltaByWeight(delta : DMD) : DMD = return weights.t * delta
 
-	def feedforward(input : DMD) : Activation = {
-		val wA = weights * input
+	def feedforward(input : Activation) : Activation = {
+		val wA = weights * input.a
 	  val outputs = wA(::, *) + biases;
 
 	  return LayAct(a = outputs.map(x => f(x)), aPrime = outputs.map(x => fPrime(x)),  z = outputs)
@@ -312,12 +312,12 @@ case class ConvolutionalLayer(
 	/*
 		Expects input in linear format, where each column is a separate input
 	*/
-	def feedforward(input : DMD) : Activation = {
+	def feedforward(input : Activation) : Activation = {
 
-		val wA = format(input).t * weights.t
+		val wA = format(input.a).t * weights.t
 		val z = wA(*, ::) + biases
 
-		val noOfInputs = input.cols
+		val noOfInputs = input.a.cols
 
 		println(s"feedforward conv $noOfInputs $hiddenArea ${z.rows} ${z.cols}")
 
@@ -344,8 +344,8 @@ case class ConvolutionalLayer(
 		}
 	}
 
-	def delta(l : Layer, d : DMD, z : DMD) : DMD = {
-		return l.deltaByWeight(d) :* (z map (fPrime(_)))
+	def delta(l : Layer, d : DMD, act : Activation) : DMD = {
+		return l.deltaByWeight(d) :* (act.aPrime)
 	}
 }
 
@@ -369,10 +369,10 @@ case class MaxPoolLayer(weights : DMD, biases : DVD, f : (Double => Double), fPr
 
 	//def gen(weights : DMD, biases : DVD, f : (Double => Double), fPrime : (Double => Double)) : MaxPoolLayer = this.copy(weights, biases, f, fPrime)
 
-	def feedforward(input : DMD) : Activation = {
+	def feedforward(input : Activation) : Activation = {
 
-		val noOfInputs = input.cols
-		val x = format(input)
+		val noOfInputs = input.a.cols
+		val x = format(input.a)
 
 		argmaxes = argmax(x(::, *)).t.data
 		println(s"maxpool feedforward $hiddenArea $noOfInputs ${x.rows} ${x.cols}")
@@ -382,7 +382,7 @@ case class MaxPoolLayer(weights : DMD, biases : DVD, f : (Double => Double), fPr
 		return LayAct(a = maxes, z = maxes, aPrime = DenseMatrix.ones[Double](maxes.rows, maxes.cols))
 	}
 
-	def delta(l : Layer, d : DMD, z : DMD) : DMD = return l.deltaByWeight(d)
+	def delta(l : Layer, d : DMD, act : Activation) : DMD = return l.deltaByWeight(d)
 
 	def deltaByWeight(delta : DMD) : DMD = {
 		val d = DenseMatrix.zeros[Double](inputShape._1, inputShape._2)
@@ -398,8 +398,8 @@ case class MaxPoolLayer(weights : DMD, biases : DVD, f : (Double => Double), fPr
 case class SoftMaxLayer(weights : DMD, biases : DVD, f : (Double => Double) = identity, fPrime : (Double => Double) = identity) extends Layer {
 	def deltaByWeight(delta : DMD) : DMD = return weights.t * delta
 
-	def feedforward(input : DMD) : Activation = {
-		val wA = weights * input
+	def feedforward(input : Activation) : Activation = {
+		val wA = weights * input.a
 	  val z = wA(::, *) + biases;
 
 	  return LayAct(z = z, a = activate(z), aPrime = actPrime(z))
@@ -421,8 +421,8 @@ case class SoftMaxLayer(weights : DMD, biases : DVD, f : (Double => Double) = id
 		return expZ.mapPairs { case ((_,c), x) => x * (summed(c) - x) / summedSquared(c) }
 	}
 
-	def delta(l : Layer, d : DMD, z : DMD) : DMD = {
-		return l.deltaByWeight(d) :* actPrime(z)
+	def delta(l : Layer, d : DMD, act : Activation) : DMD = {
+		return l.deltaByWeight(d) :* actPrime(act.z)
 	}
 
 	def gen(weights : DMD = weights, biases : DVD = biases, f : (Double => Double) = f, fPrime : (Double => Double) = fPrime) = copy(weights, biases, f, fPrime)

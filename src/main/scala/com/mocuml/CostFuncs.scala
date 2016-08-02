@@ -39,7 +39,7 @@ object CostFuncs {
 	class MeanSquareErrorCostFunc extends CostFunc {
 		def apply(a : Double, y : Double) = Math.pow(y - a, 2) /2
 
-		def delta(a : Double, y : Double, z : Double, aPrime : Double) : Double = (a - y) * aPrime
+		def delta(a : Double, y : Double, aPrime : Double) : Double = (a - y) * aPrime
 	}
 
 	val crossEntropy = new CrossEntropyCostFunc()
