@@ -49,14 +49,19 @@ trait ConvolutionalGradBuilder extends GradBuilder[ConvolutionalLayer] { this : 
     // If there are multiple inputs, the gradients for an input begins after
     // the gradients for all of the feature maps of the previous input have been
     // enumerated.
-    val unshapedGrads1 = sum(delta(::, *))
+    //println("biasGrad")
+    val unshapedGrads1 = sum(reshaped(::, *))
+    //println(s"unshapedGrads1")
 
     // Reshapes such that featureMaps increase along row axis, inputs increase
     // along col axis.
     val shapedGrads = unshapedGrads1.t.asDenseMatrix.reshape(featureMaps, numberOfInputs)
+    //println(s"shapedGrads ${shapedGrads.rows} ${shapedGrads.cols}")
+    val sumshapedGrads = sum(shapedGrads(*, ::))
+    //println("sumshapedGrads")
 
     // Sums the gradients for all the inputs, returns row-vector storing gradient for all feature maps
-    return sum(shapedGrads(*, ::))
+    return sumshapedGrads
 }
 
   def weightGrad(delta : DMD, input : Activation) : DMD = {
@@ -68,13 +73,23 @@ trait ConvolutionalGradBuilder extends GradBuilder[ConvolutionalLayer] { this : 
     // If there are multiple inputs, the gradients for an input begins after
     // the gradients for all of the feature maps of the previous input have been
     // enumerated.
-    val grad = d * format(input.a)
+    //println("d")
+    //println(d.rows)
+    //println(d.cols)
+    val f = format(input.a, hiddenShape, lrfShape._1 * lrfShape._2)
+    //println("f")
+    //println(f.rows)
+    //println(f.cols)
+    val grad = d * f
+    //println(s"d * f ${grad.rows} ${grad.cols}")
 
 
     def recurse(value : DMD) : DMD = {
+      //println("weightGrad recurse")
       if (value.rows <= featureMaps)
       {
-        return d
+        //println("return value")
+        return value
       }
       else
       {
@@ -84,7 +99,7 @@ trait ConvolutionalGradBuilder extends GradBuilder[ConvolutionalLayer] { this : 
       }
     }
 
-    return recurse(d)
+    return recurse(grad)
 }
 
   def buildGrad(delta : DMD, input : Activation) = Gradient[ConvolutionalLayer](weights = weightGrad(delta, input), biases = biasGrad(delta))

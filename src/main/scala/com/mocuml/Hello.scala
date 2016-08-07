@@ -29,10 +29,10 @@ object Hello {
   type DVD = DenseVector[Double]
 
   def timeThis[A](name : String)(func : => A) : A = {
-  	val startTime = System.currentTimeMillis
+  	val startTime = System.nanoTime
   	val r = func
-  	val endTime = System.currentTimeMillis
-  	println(s"$name took ${endTime - startTime} millis")
+  	val endTime = System.nanoTime
+  	println(s"$name took ${endTime - startTime} nanos")
   	return r
   }
 
@@ -118,9 +118,9 @@ object Hello {
 			case List() => return (n, traininglays)
 			case batch :: rest => {
 
-				println("before backprop")
+				//println("before backprop")
 				val hasDeltas = n.backprop(batch, costFunc)
-				println("after backprop")
+				//println("after backprop")
 
 				val (newTrainLays, newLayers) = ((List.empty[Option[TrainLay[_]]], List.empty[Layer]) /: ((traininglays.size - 1) to 0 by -1)) { case ((aTL, aL), i) =>
 					val l = n.layers(i);
@@ -224,7 +224,7 @@ object Hello {
 	    else
 	    {
 	    	val accumulated = (previousActivations /: layers.drop(fromLayerIndex)) ((accum, l) => {
-	    		println("feedforwardAccum")
+	    		//println("feedforwardAccum")
 	    		l.feedforward(accum.head) :: accum
 	    	})
 
@@ -249,14 +249,16 @@ object Hello {
 			  //case ((restWeights :+ weight, headDelta :: _, restZ :+ z)) => {
 			  case(((restLayers :+ upperLayer) :+ lowerLayer, lowerDelta :: _, act :: input :: restActs)) => {
 			  	//val nextDelta = (w.t * headDelta) :*  (z map(x => fPrime(x)))
+			  	//println("calcDelta")
 			  	val nextDelta = upperLayer.delta(lowerLayer, lowerDelta, act)
-
+			  	//println("nextDelta")
+			  	//println(nextDelta)
 					val upperGrad = upperLayer match {
 						case cbg : GradBuilder[_] => Some(cbg.buildGrad(nextDelta, input))
 						case _ => None
 					}
-			  	println("upperGrad")
-			  	println(upperGrad)
+			  	//println("upperGrad")
+			  	//println(upperGrad)
 			  	return calcGrads(restLayers :+ upperLayer, nextDelta :: deltas, input :: restActs, upperGrad :: grads)
 				}
 		  }
@@ -264,7 +266,7 @@ object Hello {
 		  val (iMatrix, oMatrix) = batchToIOMatrices(batch)
 
 			val last :: secondToLast :: rest = feedforwardAccum(0)(List( LayAct(iMatrix)))
-			println("backprop feedforward")
+			//println("backprop feedforward")
 			//val (z, a) = (last.z, last.a)
 
 			//val (restZ, restA) = ((List.empty[DMD], List.empty[DMD]) /: List(secondToLast, rest)) { case ((zAccum, aAccum), (zR, aR)) => ((zAccum :+ zR), aR :: aAccum/*(aAccum :+ aR)*/) }
@@ -279,11 +281,11 @@ object Hello {
 				case gb : GradBuilder[_] => Some(gb.buildGrad(deltaForFinalLayer, secondToLast))
 				case _ => None
 			}
-			println("deltaForFinalLayer")
+			//println("deltaForFinalLayer")
 
 		  //val deltas = calcDeltas(weights, List(deltaForFinalLayer), restZ)
 		  val grads = calcGrads(layers, List(deltaForFinalLayer), secondToLast :: rest, List[Option[Grad[_]]](gradForFinalLayer))
-		  println("deltas")
+		  //println("deltas")
 
 		  /*val dAndA = deltas.zip(restA)
 
