@@ -198,7 +198,7 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 
 		}
 
-		val unflipped = recurse(0, 0, None, 0)
+		val unflipped = timeThis("deltaFormat") { recurse(0, 0, None, 0) }
 
 		return flipud(unflipped)
 	}
@@ -248,14 +248,16 @@ trait LocalReceptiveFieldFormatter extends InputFormatter {
 		val noOfInputs = (i.rows * i.cols) / (inputShape._1 * inputShape._2)
 		val square = i.reshape(inputShape._1, inputShape._2 * noOfInputs)
 
+		//timeThis("redundant") { (((inputShape._1 - shape._1) / stride) + 1) }
+		val cMod = (((inputShape._1 - shape._1) / stride) + 1)
+
 		return DenseMatrix.tabulate(shape._1 * shape._2, area * noOfInputs) { case (r, c) =>
-			val srcR = stride * (c % (((inputShape._1 - shape._1) / stride) + 1)) +  dilation * (r % shape._1)
-			val srcC = stride * (c / (((inputShape._1 - shape._1) / stride) + 1)) + dilation * (r / shape._1)
+			val srcR = stride * (c % cMod) +  dilation * (r % shape._1)
+			val srcC = stride * (c / cMod) + dilation * (r / shape._1)
 			//println(s"square r: $r c: $c srcR: $srcR srcC: $srcC stride: $stride")
 			square(srcR, srcC)
 		}
 	}
-
 	/**
 		Assumes that each row corresponds to a different featuremap
 

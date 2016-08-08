@@ -427,7 +427,7 @@ object Hello {
 				)
 			)
 		val t = new Trainer(crossEntropy) with DefaultReporter with DefaultAssessor[CostFuncs.CrossEntropyCostFunc]
-		val hp = TrainingParameters(1, 30, 0.5, momentum = 0.0, lmbda = 0.0)
+		val hp = TrainingParameters(1, 1, 0.5, momentum = 0.0, lmbda = 0.0)
 		td.map (data => t.train(n, data, hp)).map(f => concurrent.Await.result(f, concurrent.duration.Duration.Inf))
 		Thread.sleep(2000)
 		/*val n = Network.withLayerSizes(List(2,1), sigmoid, sigmoidPrime)

@@ -35,3 +35,4 @@ resolvers ++= Seq(
 fork := true
 
 javaOptions += "-Xmx20480m"
+javaOptions += "-Xprof"
