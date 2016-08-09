@@ -335,7 +335,7 @@ case class ConvolutionalLayer(
 	def feedforward(input : Activation) : Activation = {
 
 		//println("feedforward conv")
-		val wA = format(input.a).t * weights.t
+		val wA =  format(input.a).t * weights.t
 		val z = wA(*, ::) + biases
 
 		val noOfInputs = input.a.cols
@@ -346,7 +346,8 @@ case class ConvolutionalLayer(
 
 		//println("feedforward conv")
 
-		return LayAct(z = zShaped, a = zShaped.map(f(_)), aPrime = zShaped.map(fPrime(_)))
+		//return timeThis("conv return with map") { LayAct(z = zShaped, a = zShaped.map(f(_)), aPrime = zShaped.map(fPrime(_))) }
+		return LayAct(z = zShaped, a = zShaped, aPrime = zShaped)
 	}
 
 	/**
